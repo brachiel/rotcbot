@@ -1,0 +1,19 @@
+rotcbot - Jabber bot that scans the TGE master server and announces new games of a specific type.
+In this case rotc - Revenge of the Cast.
+
+Create a config file in
+~/.rotcbot_jabber
+and fill it with these options:
+username = <user>@<jabber-server>
+password = <password>
+control_room = <room>@<conference-jabber-server>
+
+The last option is optional.
+
+The bot is used by either starting
+$ python rotcbot_jabber.py
+or 
+$ python rotcbot_jabber_supervisor.py
+
+The supervisor script restarts the bot if something happens, and reports the errors to
+the control room.
