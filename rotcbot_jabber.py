@@ -117,7 +117,11 @@ class RotcBot(JabberBot):
             self.error("User %s wanted to use restart, but he's not in the control room" % jid)
 
     @botcmd(hidden=True)
-    def shutdown(self, mess, args):
+    def shutdown(self, mess=None, args=None):
+        if mess is None and args is None:
+            JabberBot.shutdown(self)
+            return
+            
         jid = str(mess.getFrom()).split('/')[0]
 
         if jid == control_room:
@@ -214,12 +218,15 @@ class RotcBot(JabberBot):
             return "%s is not a valid event. Possibilities are: %s" % (args, ', '.join(self.EVENTS.keys()))
 
         groups = self.roster.getGroups(jid)
-        groups.append(args)
+        if args not in groups:
+	    groups.append(args)
 
-        self.roster.setItem(jid, groups=groups)
-        self.log("%s subscribed to %s" % (jid, args))
+            self.roster.setItem(jid, groups=groups)
+            self.log("%s subscribed to %s" % (jid, args))
 
-        return "You have subscribed to the %s event" % args
+            return "You have subscribed to the %s event" % args
+        else:
+            return "You've already subscribed to the %s event. Nothing changed." % args
 
 
     @botcmd(hidden=True)
@@ -243,7 +250,8 @@ class RotcBot(JabberBot):
         if args not in groups:
             return "You are not subscribed to the event '%s'" % args
 
-        groups.remove(args)
+        while args in groups:
+	    groups.remove(args)
 
         self.roster.setItem(jid, groups=groups)
         self.log("%s unsubscribed from %s" % (jid, args))
@@ -357,6 +365,19 @@ for line in f.readlines():
         value = 'true'
 
     option[key] = value
+
+# if irc transport is configured, we connect to the irc conference channel,
+# and accept queries from users of that irc server
+try:
+    irc_transport = option['irc_transport']
+    irc_server = option['irc_server']
+    irc_channel = option['irc_channel']
+    irc_jid = "%s%%%s@%s" % (irc_channel, irc_server, irc_transport)
+    irc = True
+    print "Found irc configuration."
+except KeyError:
+    irc = False
+    print "No irc configuration found"
     
 
 # control_room is a conference room on a jabber server, where the log is posted
@@ -442,10 +463,15 @@ if not test:
 # we are started by a supervisor script
 # if it gives us previous errors, we'll send them to the admin
 def connected():
-    global bot, control_room
+    global bot, irc_jid, control_room
+
+    if irc:
+        print "Joining IRC Channel %s" % irc_jid
+        bot.join_room(irc_jid)
 
     # join control room (XMPP MUC) if configured
     if control_room:
+        print "Joining Control Room %s" % control_room
         bot.join_room(control_room)
 
     try:

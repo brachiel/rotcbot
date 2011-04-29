@@ -256,8 +256,12 @@ class JabberBot(object):
             subscription = None
         except AttributeError, ae:
             # roster is not ready
+            try:
+                if not subscription:
+                    subscription = None
+            except UnboundLocalError:
+		subscription = None
             print 'Got presence: %s (type: %s, show: %s, status: %s, subscription: %s)' % (jid, type_, show, status, subscription)
-            subscription = None
             return
 
         if type_ == 'error':

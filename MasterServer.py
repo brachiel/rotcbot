@@ -4,7 +4,7 @@ import time
 
 from socket import *
 
-MASTER_SERVER = "74.63.12.22:28002"
+MASTER_SERVER = "127.0.0.1:28002"
 KEY = 0
 
 def _str_to_bin(string):
@@ -145,18 +145,24 @@ def pingServer(ip):
 
     data = UDPSock.recv(1024)
 
-    packet_type, flags, key = struct.unpack('<BBI', data[0:6])
-    data = data[6:]
+    try:
+        packet_type, flags, key = struct.unpack('<BBI', data[0:6])
+        data = data[6:]
 
-    protocolVersion, data = _extract_str(data) # should be VER1
+        protocolVersion, data = _extract_str(data) # should be VER1
 
-    unpacked = struct.unpack('<III', data[0:12]) # version numbers
-    data = data[12:]
+        unpacked = struct.unpack('<III', data[0:12]) # version numbers
+        data = data[12:]
 
-    serverName, data = _extract_str(data)
+        serverName, data = _extract_str(data)
 
-    return { 'server_name': serverName, 'ping': ping }
-
+        return { 'server_name': serverName, 'ping': ping }
+    except ValueError:
+        print "ServerPing: ValueError"
+        return None
+    except struct.error:
+        print "ServerPing: Unpack failed."
+        return None
 
 
 def getServerDetails(ip):
@@ -181,24 +187,32 @@ def getServerDetails(ip):
 
     data = UDPSock.recv(1024)
 
-    packet_type, flags, key = struct.unpack('<BBI', data[0:6])
+    try:
+	packet_type, flags, key = struct.unpack('<BBI', data[0:6])
 
-    # get the strings
-    serverinfo['game_type']       , data = _extract_str(data[6:])
-    serverinfo['game_version']    , data = _extract_str(data)
-    serverinfo['mission_type']    , data = _extract_str(data)
-    dummy , data = _extract_str(data) # don't know why this is necessary
-    serverinfo['mission_name']    , data = _extract_str(data)
-    serverinfo['mission_homepage'], data = _extract_str(data)
+	# get the strings
+	serverinfo['game_type']       , data = _extract_str(data[6:])
+#VER1	serverinfo['game_version']    , data = _extract_str(data)
+	serverinfo['mission_type']    , data = _extract_str(data)
+#VER1	dummy , data = _extract_str(data) # don't know why this is necessary
+	serverinfo['mission_name']    , data = _extract_str(data)
+#VER1	serverinfo['mission_homepage'], data = _extract_str(data)
 
-    serverinfo['status'], serverinfo['player_count'], serverinfo['max_players'], \
-    serverinfo['bot_count'], serverinfo['server_cpu'] = struct.unpack('<BBBBh', data[0:6])
+	serverinfo['status'], serverinfo['player_count'], serverinfo['max_players'], \
+	serverinfo['bot_count'], serverinfo['server_cpu'] = struct.unpack('<BBBBh', data[0:6])
 
-    serverinfo['server_info'], data = _extract_str(data[6:])
+	serverinfo['server_info'], data = _extract_str(data[6:])
+    except ValueError:
+        print "ServerDetails: Answer is of unknown format."
+        return None
+    except struct.error:
+        print "ServerDetails: Unpack error"
+        return None
 
     return serverinfo
 
-#print getServerList()
-#print pingServer("84.23.68.56:28000")
-#print getServerDetails("84.23.68.56:28000")
+if __name__=="__main__":
+	print getServerList()
+	print pingServer("84.23.68.56:28000")
+	print getServerDetails("84.23.68.56:28000")
 

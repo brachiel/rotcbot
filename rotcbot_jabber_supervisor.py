@@ -6,7 +6,7 @@
 import traceback
 import time
 
-SCRIPT = './rotcbot_jabber.py'
+SCRIPT = '/home/rotc/rotcbot_jabber/rotcbot_jabber.py'
 
 globs = { 'supervisor_errors': [] }
 
@@ -24,7 +24,7 @@ while 1:
 	globs['supervisor_errors'] = [ err ]
 
     print "RESTARTING ROTCBOT..."
-    time.sleep(1)
+    time.sleep(7)
 
 print "SHUTDOWN ROTCBOT..."
 
