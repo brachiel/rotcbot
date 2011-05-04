@@ -212,7 +212,8 @@ def getServerDetails(ip):
     return serverinfo
 
 if __name__=="__main__":
-	print getServerList()
-	print pingServer("84.23.68.56:28000")
-	print getServerDetails("84.23.68.56:28000")
+	mylist = getServerList()
+	print mylist
+	print pingServer(mylist[0])
+	print getServerDetails(mylist[0])
 
