@@ -20,6 +20,8 @@ class RotcJSON(RotcWatcher.Watcher):
 
 	def write_server_list(self):
 		fh = open(self.json_path, 'w')
+		data = {'time':int(time.time()),
+                        'server_info':self.server_info}
 		json.dump(self.server_info, fh)
 		fh.close()
 
