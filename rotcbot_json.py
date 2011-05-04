@@ -1,5 +1,6 @@
 import RotcWatcher
 import json
+import time
 
 class RotcJSON(RotcWatcher.Watcher):
 	def __init__(self, json_path, timeout=30):
@@ -22,7 +23,7 @@ class RotcJSON(RotcWatcher.Watcher):
 		fh = open(self.json_path, 'w')
 		data = {'time':int(time.time()),
                         'server_info':self.server_info}
-		json.dump(self.server_info, fh)
+		json.dump(data, fh)
 		fh.close()
 
 if __name__ == '__main__':
