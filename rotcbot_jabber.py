@@ -11,6 +11,7 @@ __license__ = 'GPLv3 or later'
 
 from jabberbot import JabberBot, botcmd
 from RotcWatcher import Watcher
+import xmpp
 import time
 import os    # just needed to get the HOME variable
 
@@ -85,7 +86,7 @@ class RotcBot(JabberBot):
     @botcmd(hidden=True)
     def broadcast(self, mess, args):
         """ADMIN - broadcast a message to all users of rotcbot."""
-        jid = str(mess.getFrom()).split('/')[0]
+        jid = self.get_jid(mess)
 
         if jid == control_room:
             self._broadcast(''.join(args))
@@ -95,7 +96,7 @@ class RotcBot(JabberBot):
     @botcmd(hidden=True)
     def msg(self, mess, args):
         """sends a message to a jid."""
-        jid = str(mess.getFrom()).split('/')[0]
+        jid = self.get_jid(mess)
 
         if jid == control_room:
             try:
@@ -109,7 +110,7 @@ class RotcBot(JabberBot):
 
     @botcmd(hidden=True)
     def restart(self, mess, args):
-        jid = str(mess.getFrom()).split('/')[0]
+        jid = self.get_jid(mess)
 
         if jid == control_room:
             self.quit() # we will be restarted by the supervisor
@@ -122,7 +123,7 @@ class RotcBot(JabberBot):
             JabberBot.shutdown(self)
             return
             
-        jid = str(mess.getFrom()).split('/')[0]
+        jid = self.get_jid(mess)
 
         if jid == control_room:
             self.log("Bang, Bang, %s shot me down, bang bang..." % jid)
@@ -132,7 +133,7 @@ class RotcBot(JabberBot):
 
     @botcmd(hidden=True)
     def show_contacts(self, mess, args):
-        jid = str(mess.getFrom()).split('/')[0]
+        jid = self.get_jid(mess)
 
         if jid == control_room:
             contacts = "List of all users:\n"
@@ -155,6 +156,11 @@ class RotcBot(JabberBot):
     #    """Tells the bot to die"""
     #    
     #    raise Exception('killed', mess)
+
+##########################################################
+    def send_simple_reply(self, mess, text, private=True):
+        """Send a simple response to a message"""
+        self.send_message( self.build_reply(mess,text, private) )
 
     def idle_proc(self):
         if self.last_rotc_update + 7 < int(time.time()):
@@ -191,16 +197,20 @@ class RotcBot(JabberBot):
     @botcmd
     def show_events(self, mess, args):
         """Shows the events you've subscribed. Aliases: s, show"""
-        jid = str(mess.getFrom()).split('/')[0]
+        jid = self.get_jid(mess)
 
-        groups = self.roster.getGroups(jid)
+        try:
+            groups = self.getGroups(jid)
+        except:
+            print self.roster._data.keys()
+            raise
 
         if len(groups) == 0:
             return "You haven't subscribed any events. To do so, use sub_event"
        
-	msg = []
-	for event,desc in self.EVENTS.items():
-	    if event in groups:
+        msg = []
+        for event,desc in self.EVENTS.items():
+            if event in groups:
                 msg.append('%s - %s' % (event, desc))
         return "The events you've currently subscribed:\n" + '\n'.join(msg)
 
@@ -212,14 +222,14 @@ class RotcBot(JabberBot):
     @botcmd
     def sub_event(self, mess, args):
         """Subscribe an event (new_game, game_close, player_change, new_server, server_close). Aliases: sub"""
-        jid = str(mess.getFrom()).split('/')[0]
+        jid = self.get_jid(mess)
 
         if args not in self.EVENTS.keys():
             return "%s is not a valid event. Possibilities are: %s" % (args, ', '.join(self.EVENTS.keys()))
 
-        groups = self.roster.getGroups(jid)
+        groups = self.getGroups(jid)
         if args not in groups:
-	    groups.append(args)
+            groups.append(args)
 
             self.roster.setItem(jid, groups=groups)
             self.log("%s subscribed to %s" % (jid, args))
@@ -240,9 +250,9 @@ class RotcBot(JabberBot):
     @botcmd
     def unsub_event(self, mess, args):
         """Unsubscribe an event. Aliases: un, unsub"""
-        jid = str(mess.getFrom()).split('/')[0]
+        jid = self.get_jid(mess)
 
-        groups = self.roster.getGroups(jid)
+        groups = self.getGroups(jid)
 
 #        if args not in self.EVENTS.keys():
 #            return "%s is not a valid event. Possibilities are: %s" % (args, ', '.join(self.EVENTS.keys()))
@@ -251,13 +261,47 @@ class RotcBot(JabberBot):
             return "You are not subscribed to the event '%s'" % args
 
         while args in groups:
-	    groups.remove(args)
+            groups.remove(args)
 
         self.roster.setItem(jid, groups=groups)
         self.log("%s unsubscribed from %s" % (jid, args))
 
         return "You've been unsubscribed to the event '%s'" % args
     
+    def getGroups(self, jid):
+        if not self.roster.getItem(jid):
+            return []
+        else:
+            return self.roster.getGroups(jid)
+
+    def get_jid(self, mess):
+        global irc, irc_transport, irc_server
+
+        type = mess.getType()
+        jid = mess.getFrom()
+
+        if irc and irc_transport and jid.getDomain() == irc_transport:
+            type = 'irc'
+
+        print "Get JID: %s %s: " % (str(jid), type),
+
+        if type == 'groupchat':
+            jid = jid.getStripped()
+
+        elif type == 'irc':
+            node = jid.getNode().split('%') # split IRC server from chan name
+            if len(node) >= 2 and node[0][0] == '#': # is channel -> converting to user
+                jid.setNode("%s%%%s" % (jid.getResource(), irc_server))
+                jid = jid.getStripped()
+            else: # is user
+                jid.setNode("%s%%%s" % (node[0], irc_server))
+                jid = jid.getStripped()
+
+        else: # normal jabber chat
+            jid = jid.getStripped()
+
+        print str(jid)
+        return jid
             
     def _broadcast(self, msg):
         self._broadcast_event(None, msg)
@@ -269,13 +313,18 @@ class RotcBot(JabberBot):
         # build a list of unique jids
         jid_status = {}
         for jid, (show, status) in self._JabberBot__seen.items():
-            jid = str(jid).split('/')[0]
+            jid = str(jid)
+            jid = jid[: (jid + '/').find('/')]
+#        for jid in self.roster.getItems():
+#            show = self.roster.getStatus(jid)
+#            jid = str(self.roster.getRawItem(jid)) # stripped
+#            jid = str(jid)
 
             if show is self.AVAILABLE:
                 jid_status[jid] = show
 
         for jid in jid_status.keys():
-	    groups = self.roster.getGroups(jid)
+            groups = self.getGroups(jid)
             if groups and (event == None or event in groups): # None is broadcast to all
                 print "%s: %s < %s" % (event, jid, msg)
                 self.send(jid, msg, message_type='chat')
@@ -372,7 +421,8 @@ try:
     irc_transport = option['irc_transport']
     irc_server = option['irc_server']
     irc_channel = option['irc_channel']
-    irc_jid = "%s%%%s@%s" % (irc_channel, irc_server, irc_transport)
+    irc_nick = option['irc_nick']
+    irc_jid = "%s%%%s@%s/%s" % (irc_channel, irc_server, irc_transport, irc_nick)
     irc = True
     print "Found irc configuration."
 except KeyError:
@@ -429,7 +479,7 @@ def unknown_command(mess, cmd, args):
     if mess.getType() == "groupchat":
         return None
 
-    jid = str(mess.getFrom()).split('/')[0]
+    jid = mess.getFrom().getStripped()
     bot.send(control_room, "%s: %s %s" % (jid, cmd, ''.join(args)), message_type='groupchat')
     return """Sorry, I don't know that command - but I forwarded your message to the admins, so they might fix that. Use "help" for available commands."""
 
@@ -463,11 +513,14 @@ if not test:
 # we are started by a supervisor script
 # if it gives us previous errors, we'll send them to the admin
 def connected():
-    global bot, irc_jid, control_room
+    global bot, irc, irc_jid, control_room
 
     if irc:
         print "Joining IRC Channel %s" % irc_jid
-        bot.join_room(irc_jid)
+        p = xmpp.Presence(to=irc_jid)
+        p.setTag('x',namespace=xmpp.NS_MUC).setTagData('password','')
+        bot.connect().send(p)
+#        bot.join_room(irc_jid)
 
     # join control room (XMPP MUC) if configured
     if control_room:
