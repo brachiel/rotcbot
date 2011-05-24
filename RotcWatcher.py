@@ -26,10 +26,11 @@ class Watcher(object):
         ping = MasterServer.pingServer(addr)
         if not ping:
             if addr in self.server_info:
+                delete = True
                 if 'new' not in self.server_info[addr]:
-                    self.callback_server_close(addr)
-
-                del(self.server_info[addr])
+                    self.callback_server_noping(addr)
+                else:
+                    del(self.server_info[addr])
             return False
 
         details = MasterServer.getServerDetails(addr)
@@ -68,6 +69,16 @@ class Watcher(object):
 
     def get_server_details(self, addr):
         return self.update_server(addr)
+
+    def callback_server_noping(self, addr, server_details=None):
+        if 'no_ping' in self.server_info[addr]:
+            self.server_info[addr]['no_ping'] += 1
+        else:
+            self.server_info[addr]['no_ping'] = 1
+
+        if self.server_info[addr]['no_ping'] > 5:
+            self.callback_server_close(addr, server_details)
+            del(self.server_info[addr])
 
     def callback_server_close(self, addr, server_details=None):
         pass
