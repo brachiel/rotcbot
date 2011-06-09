@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# RotcBot: A simple jabber/xmpp bot framework
+# RotcBot: A simple TGE server event broadcaster
 # Copyright (c) 2011 Wanja Chresta <github.com/brachiel>
 #
 # This program is free software; you can redistribute it and/or modify
@@ -59,12 +59,14 @@ class JabberBotExtended(JabberBot):
         self.custom_message_handler = custom_message_handler
 
         self.irc = False
+        self.irc_conferenceroom_tags = { ('x', xmpp.NS_MUC): [] } # TODO: This has to be changed depending on the used IRC transport
+        
         self.control_room = False
 
         if 'name' not in config.keys():
             self.log.error("Please define a name in the configuration.")
             raise Exception("Please define a name in the configuration.")
-
+        
     def build_reply(self, mess, text=None, private=False):
         """Build a message for responding to another message.  Message is NOT sent"""
         response = self.build_message(text)
@@ -72,21 +74,11 @@ class JabberBotExtended(JabberBot):
         # IRC related stuff
         if self.irc and self.mess_is_from_irc(mess):
             self.log.debug("Got IRC Message. Building IRC reply.")
-            if mess.getFrom().getNode()[0] == '#':
-                private = True
-                
-            #src = mess.getFrom()
-            #node = src.getNode()
-            #res = src.getResource()
             
-            #if '%' in node:
-            #    name, server = node.split('%', 1)
-            #else:
-            #    self.log.warn("An incoming IRC message contained a node without %. This shouldn't happen.")
-            #    name = node
-            #    server = self.config['irc_server']
-                
-            #if name[0] in ['#', '@', '%']: # channel characters
+            if self.irc_allow_loud(mess.getFrom(), mess.getType()):
+                private = False
+            else:
+                private = True
         
         if private:
             response.setTo(mess.getFrom())
@@ -96,6 +88,9 @@ class JabberBotExtended(JabberBot):
             response.setType(mess.getType())
         response.setThread(mess.getThread())
         return response
+
+    def irc_allow_loud(self, jid):
+        return False # defauls is no loud messages to IRC at all
 
     def mess_is_from_irc(self, mess):
         return mess.getFrom().getDomain() == self.config['irc_transport']
@@ -113,7 +108,7 @@ class JabberBotExtended(JabberBot):
     def join_room(self, room, username=None, tags={}):
         """Join the specified multi-user chat room"""
         if username is None:
-            username = self.__username.split('@')[0]
+            username = self._JabberBot__username.split('@')[0]
         my_room_JID = '/'.join((room, username))
         p = xmpp.Presence(to=my_room_JID)
         for (tag_name, namespace), KeyValPairs in tags.items():
@@ -121,6 +116,29 @@ class JabberBotExtended(JabberBot):
             for (key, value) in KeyValPairs:
                 tag.setTagData(key, value)
         self.connect().send(p)
+       
+       
+    @botcmd(admin=True)
+    def join_chat(self, mess, args):
+        room = args[:(args + ' ').find(' ')]
+        if not chan:
+            return 'Usage: join_chat channel_name@conference_server'
+        
+        self.join_room(room, username)
+        return 'Success'
+        
+    @botcmd(admin=True)
+    def join_irc_chan(self, mess, args):
+        if self.irc:
+            chan = args[:(args + ' ').find(' ')]
+            if not chan:
+                return 'Usage: join_irc_chan channel_name (only the IRC name of the channel; no server or transport!).'
+
+            room = "%s%%%s@%s" % (chan, self.config['irc_server'], self.config['irc_transport'])
+            self.join_room(room, username=self.config['irc_nick'], tags=self.irc_conferenceroom_tags) 
+            return 'Success'
+        else:
+            return 'Not connected to an IRC network.'
         
     def on_connected(self):
         c = self.config
@@ -130,8 +148,7 @@ class JabberBotExtended(JabberBot):
                 self.irc_room = "%s%%%s@%s" % (c['irc_channel'], c['irc_server'], c['irc_transport'])
                 
                 # We need to use the x-tag to join an IRC channel
-                tags = { ('x', xmpp.NS_MUC): [('password', '')]}
-                self.join_room(self.irc_room, username=c['irc_nick'], tags=tags)
+                self.join_room(self.irc_room, username=c['irc_nick'], tags=self.irc_conferenceroom_tags)
                 
                 self.log.info("Joined IRC Channel: %s on %s via transport %s" % 
                                 (c['irc_channel'], c['irc_server'], c['irc_transport']))
@@ -150,6 +167,18 @@ class JabberBotExtended(JabberBot):
 
 
     def custom_message_handler(self, mess, text):
+        reply = self.custom_message_handler_admin(mess, text)
+        
+        if reply: # Send reply and mark message as handled.
+            self.send_simple_reply(mess, reply)
+            return True
+        
+        if reply == False: # Ignore those messages, don't send a reply and mark them as handled.
+            return True
+        
+        return None # custom_handler has no effect on those messages. Normal procedures are called.
+        
+    def custom_message_handler_admin(self, mess, text):
         """Handle admin commands, allow and report them, if used by non-admins."""
         modified_text = False
         is_irc = False
@@ -159,21 +188,24 @@ class JabberBotExtended(JabberBot):
         
         # Ignore any message from an IRC channel that doesn't begin with my name or +
         if self.irc and self.mess_is_from_irc(mess):
-            is_irc = True
-            
-            if mess.getFrom().getNode()[0] != '#': return False
-            
-            if mess.getType() == 'groupchat':
-                if text.startswith('+'): # Message starts with +
-                    text = text[1:].strip()
-                    modified_text = True
-                elif text.startswith(self.config['name']): # Message starts with my name
-                    text = text[len(self.config['name']):]
-                    text = text.lstrip(',:;') # remove punctuations after the name
-                    text = text.strip() # remove whitespaces
-                    modified_text = True
-                else:
-                    return False # Ignore all other messages
+            # TODO: IRC is simplex; we only send messages to IRC, but don't process any replies or requests!
+            return False
+        
+#            is_irc = True
+#            
+#            #if mess.getFrom().getNode()[0] != '#': return False
+#            
+#            if mess.getType() == 'groupchat':
+#                if text.startswith('+'): # Message starts with +
+#                    text = text[1:].strip()
+#                    modified_text = True
+#                elif text.startswith(self.config['name']): # Message starts with my name
+#                    text = text[len(self.config['name']):]
+#                    text = text.lstrip(',:;') # remove punctuations after the name
+#                    text = text.strip() # remove whitespaces
+#                    modified_text = True
+#                else:
+#                    return False # Ignore all other messages
         
         if ' ' in text:
             command, args = text.split(' ', 1)
@@ -181,14 +213,11 @@ class JabberBotExtended(JabberBot):
             command, args = text, ''
         cmd = command.lower()
         
-        # Handle admin commands
-        try:
-            self.log.debug("** Custom Handler: %s %s %s" % (cmd, self.commands[cmd], self.commands[cmd]._jabberbot_admin))
-        except:
-            self.log.debug("** Custom Handler: %s %s" % (cmd, self.commands))
         
+        # CAUTION: All admin commands must be caught by this if, or they'll be handed down to the standard routine
+        # which means everyone could execute them.
         if self.commands.has_key(cmd) and self.commands[cmd]._jabberbot_admin:
-            if self.is_admin(mess):
+            if not is_irc and self.is_admin(mess):
                 try:
                     self.log.info("The user '%s' used the admin command '%s'." % (mess.getFrom(), text))
                     return self.commands[cmd](mess, args)
@@ -203,9 +232,10 @@ class JabberBotExtended(JabberBot):
                 if reply: return reply
                 else:     return default_reply
         
-        if is_irc and self.commands.has_key(cmd) and self.commands[cmd]._jabberbot_no_irc:
-            return "The command '%s' is not available on IRC. Please use my jabber interface: %s" % \
-                                                                        (cmd, self.jid.getStripped())
+# TODO: If we allow replies from IRC, we want to reenable this code.
+#        if is_irc and self.commands.has_key(cmd) and self.commands[cmd]._jabberbot_no_irc:
+#            return "The command '%s' is not available on IRC. Please use my jabber interface: %s" % \
+#                                                                        (cmd, self.jid.getStripped())
                 
         # If the command is not found, try to find the best matching command
         if not self.commands.has_key(cmd):
@@ -213,15 +243,12 @@ class JabberBotExtended(JabberBot):
             cmds = [ name for (name, command) in self.commands.iteritems() 
                         if not command._jabberbot_hidden and not command._jabberbot_admin ]
             cmds.sort()
-            
-            self.log.debug("** Looking for the closest match to %s in %s" % (cmd, cmds))
-            
+                        
             # we look for the first matching command alpabetically, deleting the last character of all commands
             # every loop. So eventually, "sh" will match "show" before "show_snow".
             matching_command = None
             for n in range(-1, -max([len(x) for x in cmds]), -1):
                 try:
-                    self.log.debug("**- Looking in %s" % [ x[:n] for x in cmds ])
                     i = [ x[:n] for x in cmds ].index(cmd)
                     matching_command = cmds[i]
                     break
@@ -229,8 +256,7 @@ class JabberBotExtended(JabberBot):
                     continue
                     
             if matching_command:
-                self.log.debug("** Found matching command: %s. Executing it now." % matching_command)
-                
+                self.log.debug("%s cmd: %s" % (str(mess.getFrom()), text))
                 if is_irc and self.commands[matching_command]._jabberbot_no_irc:
                     return "The command '%s' is not available on IRC. Please use my jabber interface: %s" % \
                                                                         (matching_command, self.jid.getStripped())
@@ -241,31 +267,33 @@ class JabberBotExtended(JabberBot):
                     jid = mess.getFrom().getStripped()
                     self.log.exception('An error happened while processing a message ("%s") from %s"' % (text, jid))
                     return traceback.format_exc(e)
+        else:        
+            self.log.debug("%s cmd: %s" % (str(mess.getFrom()), text))
         
-        
-        # If we changed the text, we need to execute an exact matching command now. Otherwise the original
-        # method tries to execute the unmodified text (since it has it's own copy).
-        if modified_text:
-            if self.commands.has_key(cmd):
-                try:
-                    return self.commands[cmd](mess, args)
-                except Exception, e:
-                    self.log.exception('An error happened while processing a message ("%s") from %s: %s"' % (text, jid, reply))
-                    return traceback.format_exc(e)
-            else:
-                # We can always reply here, since we are going to repsond to irc in private mode anyway.
-                default_reply = 'Unknown command: "%s". Type "help" for available commands.' % cmd
-                return default_reply 
-                    
-        self.log.debug("** No command match. Using default.")
-        return None # use the standard method to respond
+    
+#TODO: If we allow replies from IRC, we want to reenable this code.
+#        # If we changed the text, we need to execute an exact matching command now. Otherwise the original
+#        # method tries to execute the unmodified text (since it has it's own copy).
+#        if modified_text:
+#            if self.commands.has_key(cmd):
+#                try:
+#                    return self.commands[cmd](mess, args)
+#                except Exception, e:
+#                    self.log.exception('An error happened while processing a message ("%s") from %s: %s"' % (text, jid, reply))
+#                    return traceback.format_exc(e)
+#            else:
+#                # We can always reply here, since we are going to repsond to irc in private mode anyway.
+#                default_reply = 'Unknown command: "%s". Type "help" for available commands.' % cmd
+#                return default_reply 
+            
+        return None
 
     def unknown_command(self, mess, cmd, args):
         "We have to define this function because we use a custom message handler."
         type = mess.getType()
 
         if type == "groupchat": 
-            return False # This is not None, so we're good
+            return False # This is not None, so the default routine to generate an "unknown message" kicks in
         else:
             return 'Unknown command: "%s". Type "help" for available commands.' % cmd
         
@@ -306,7 +334,7 @@ class JabberBotExtended(JabberBot):
             else:
                 continue
 
-            if self.irc and jid.getNode()[0] == '#' and jid.getDomain() == self.config['irc_transport']:
+            if self.irc and jid.getDomain() == self.config['irc_transport']:
                 chan = jid.getNode()
                 chan = chan[:(chan+'%').find('%')] # get the channel name
                 jid = xmpp.JID(jid.getStripped()) # copy the jid, so we don't change the original one
@@ -328,12 +356,12 @@ class JabberBotExtended(JabberBot):
                 self.log.debug("< %s %s" % (jid, message))
 
     def callback_presence(self, conn, presence):
+           
         super(JabberBotExtended,self).callback_presence(conn, presence)
-        
+           
         jid, type_, show, status = presence.getFrom(), \
                 presence.getType(), presence.getShow(), \
                 presence.getStatus()
-                
                 
         try:
             subscription = self.roster.getSubscription(unicode(jid.__str__()))
@@ -349,7 +377,7 @@ class JabberBotExtended(JabberBot):
             self.was_subscribed(presence)
             
     def was_subscribed(self, presence):
-        pass
+        self.log.info("New subscriber: %s" % str(presence.getFrom()))
 
     @botcmd
     def help(self, mess, args):
@@ -429,7 +457,11 @@ class JabberBotExtended(JabberBot):
             jid = args[0]
             group = args[1]
             
-            groups = set(self.roster.getGroups(jid))
+            try:
+                groups = set(self.roster.getGroups(jid))
+            except KeyError:
+                return "There is no user with that jid."
+                
             if group not in groups:
                 groups.add(group)
                 self.roster.setItem(jid, groups=list(groups))
@@ -447,7 +479,11 @@ class JabberBotExtended(JabberBot):
             jid = args[0]
             group = args[1]
             
-            groups = set(self.roster.getGroups(jid))
+            try:
+                groups = set(self.roster.getGroups(jid))
+            except KeyError:
+                return "There is no user with that jid."
+            
             if group in groups:
                 groups.remove(group)
                 self.roster.setItem(jid, groups=list(groups))
@@ -463,7 +499,10 @@ class JabberBotExtended(JabberBot):
         """Shows all groups of a given user"""
         jid = text[:(text+' ').find(' ')]
         
-        groups = set(self.roster.getGroups(jid))
+        try:
+            groups = set(self.roster.getGroups(jid))
+        except KeyError:
+            return "There is no user with that jid."
         return "User %s has groups: %s" % (jid, list(groups))
     
     def is_admin(self, mess):
@@ -548,7 +587,7 @@ short versions of the commands, as long as they're unabbiguous. So you can use "
         self.log.addHandler(self)
         
         # The messages that go to the console
-        self.log.setLevel(logging.INFO)
+        self.log.setLevel(logging.DEBUG)
         
         
         #####
@@ -590,6 +629,22 @@ short versions of the commands, as long as they're unabbiguous. So you can use "
         self.send(jid, "Hi! I'll tell you about new rotc games. You can subscribe to various server events, like get "+
                     +"notified, when a new empty server is created, or the player count of a server changes. Use the "+
                     +"help command, to get more information.")
+    ###
+    
+    def irc_allow_loud(self, jid, type):
+        if type == 'groupchat':
+            try:
+                groups = self.roster.getGroups(jid.getStripped())
+
+                if 'irc_loud' in groups:
+                    return True
+                else:
+                    return False
+            except KeyError:
+                return False
+        else: # we always reply normally to normal chats
+            return True
+    
     ###
     
     @botcmd(no_irc=True)
@@ -736,7 +791,7 @@ short versions of the commands, as long as they're unabbiguous. So you can use "
 
         name = self.server_info[addr]['server_name']
 
-        msg = "Server '%s' went from %s players to %s players." % (name, from_players, to_players)
+        msg = "Server '%s' has now %s player(s)." % (name, to_players)
         self.log.info(msg)
 
         self.broadcast(msg, to_groups='player_change')
