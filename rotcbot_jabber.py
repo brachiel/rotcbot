@@ -59,6 +59,7 @@ class JabberBotExtended(JabberBot):
         self.custom_message_handler = custom_message_handler
 
         self.irc = False
+        self.irc_nickserv = False
         self.irc_conferenceroom_tags = { ('x', xmpp.NS_MUC): [] } # TODO: This has to be changed depending on the used IRC transport
         
         self.control_room = False
@@ -145,17 +146,35 @@ class JabberBotExtended(JabberBot):
                     
         if c['irc_server']:
             try:
-                self.irc_room = "%s%%%s@%s" % (c['irc_channel'], c['irc_server'], c['irc_transport'])
+                rooms = c['irc_channel'].split(',')
+                self.irc_rooms = []
                 
-                # We need to use the x-tag to join an IRC channel
-                self.join_room(self.irc_room, username=c['irc_nick'], tags=self.irc_conferenceroom_tags)
-                
-                self.log.info("Joined IRC Channel: %s on %s via transport %s" % 
-                                (c['irc_channel'], c['irc_server'], c['irc_transport']))
-                self.irc = True
+                for room in rooms:
+                    room_string = "%s%%%s@%s" % (room, c['irc_server'], c['irc_transport'])
+                    self.irc_rooms.append(room_string)
+
+                    # We need to use the x-tag to join an IRC channel
+                    self.join_room(room_string, username=c['irc_nick'], tags=self.irc_conferenceroom_tags)
+
+                    self.log.info("Joined IRC Channel: %s on %s via transport %s" % 
+                                    (room, c['irc_server'], c['irc_transport']))
+                if len(rooms) > 0:
+                    self.irc = True
             except KeyError, e:
                 self.irc = False
                 self.log.error("IRC: Inconsistent or wrong IRC configuration: %s" % str(e))
+        
+        if self.irc and c['irc_nickserv_password']:
+            # We have a nickserv password set; if NickServ asks us for a password, we'll reply
+            # TODO This needs to be adapted; based on the type of IRC transport used.
+            # With ejabberd, we use ! to separate nicks from the server
+            self.irc_nickserv_string = "%s!%s@%s" % ("NickServ", c['irc_server'], c['irc_transport'])
+            
+            # We register nickserv as being available, so the password request isn't ignored.
+            self.nickserv_jid = xmpp.JID(self.irc_nickserv_string)
+            self._JabberBot__seen[self.nickserv_jid] = (self.AVAILABLE, "")
+            
+            self.irc_nickserv = True
         
         if c['control_room']:
             self.join_room(c['control_room'], c['name'])
@@ -167,6 +186,15 @@ class JabberBotExtended(JabberBot):
 
 
     def custom_message_handler(self, mess, text):
+        # First, log all incoming messages at INFO level; except the ones from the control room:
+        if not mess.getFrom().getStripped() == self.config['control_room'] and text.find('&lt;') != 0:
+            self.log.info('&lt;%s&gt; %s' % (str(mess.getFrom()), text))
+        
+        # We handle nickserv events from IRC
+        if self.irc and self.irc_nickserv and self.custom_message_handler_nickserv(mess, text):
+            return True
+        
+        # If that was not handled, we now handle everything else
         reply = self.custom_message_handler_admin(mess, text)
         
         if reply: # Send reply and mark message as handled.
@@ -177,7 +205,28 @@ class JabberBotExtended(JabberBot):
             return True
         
         return None # custom_handler has no effect on those messages. Normal procedures are called.
+    
+    def custom_message_handler_nickserv(self, mess, text):
+        if not self.mess_is_from_irc(mess):
+            return False
         
+        # TODO: This needs to be changed depending on the IRC transport used. Here we use ejabberd
+        nick = mess.getFrom().getNode()
+        nick = nick[:(nick + "!").find("!")]
+        nick = nick.lower()
+        
+        if nick == 'nickserv':
+            # We handle all nickserv related messages. Everything else by nickserv is dropped.
+            if text.find('nickname is registered') >= 0:
+                ident_text = "identify %s" % self.config['irc_nickserv_password']
+                self.send(self.irc_nickserv_string, ident_text, message_type=mess.getType())
+            
+            return True
+        else:
+            return False
+        
+        
+    
     def custom_message_handler_admin(self, mess, text):
         """Handle admin commands, allow and report them, if used by non-admins."""
         modified_text = False
@@ -625,7 +674,7 @@ short versions of the commands, as long as they're unabbiguous. So you can use "
         jid = presence.getFrom().getStripped()
         
         self.sub_event(presence.getFrom(), 'new_game')
-        log.info("New user '%s' subscribed to us." % jid)
+        self.log.info("New user '%s' subscribed to us." % jid)
         self.send(jid, "Hi! I'll tell you about new rotc games. You can subscribe to various server events, like get "+
                     +"notified, when a new empty server is created, or the player count of a server changes. Use the "+
                     +"help command, to get more information.")
@@ -700,7 +749,7 @@ short versions of the commands, as long as they're unabbiguous. So you can use "
         groups.remove(args)
 
         self.roster.setItem(jid, groups=list(groups))
-        self.log("%s unsubscribed from %s" % (jid, args))
+        self.log.info("%s unsubscribed from %s" % (jid, args))
 
         return "You've been unsubscribed to the event '%s'" % args
 
