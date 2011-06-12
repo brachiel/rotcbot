@@ -673,7 +673,7 @@ short versions of the commands, as long as they're unabbiguous. So you can use "
     def was_subscribed(self, presence):
         jid = presence.getFrom().getStripped()
         
-        self.sub_event(presence.getFrom(), 'new_game')
+        self.sub_event(presence, 'new_game')
         self.log.info("New user '%s' subscribed to us." % jid)
         self.send(jid, "Hi! I'll tell you about new rotc games. You can subscribe to various server events, like get "+
                     +"notified, when a new empty server is created, or the player count of a server changes. Use the "+
